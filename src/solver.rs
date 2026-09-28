@@ -4,10 +4,11 @@ use crate::{Board, CrosswordGrid, FlatTrie};
 /// Candidate counts above this are only used to order capelitos, so they are capped
 const CANDIDATE_COUNT_LIMIT: usize = 256;
 
-/// Fills every capelito of the grid with words from the trie.
+/// Fills every capelito of the grid with words from the trie, trying candidates in a
+/// random order driven by `seed`: the same seed always gives the same board.
 /// Returns `false` and leaves the board unchanged when there is no solution.
-pub fn solve_backtrack(grid: &CrosswordGrid, trie: &FlatTrie, board: &mut Board) -> bool {
-    Solver::new(grid, trie, board).is_some_and(|mut solver| solver.backtrack())
+pub fn solve_backtrack(grid: &CrosswordGrid, trie: &FlatTrie, board: &mut Board, seed: u64) -> bool {
+    Solver::new(grid, trie, board, seed).is_some_and(|mut solver| solver.backtrack())
 }
 
 struct Solver<'a> {
@@ -19,11 +20,12 @@ struct Solver<'a> {
     candidate_counts: Vec<usize>,
     /// (capelito id, previous count), undone back to a saved length on backtrack
     trail: Vec<(usize, usize)>,
+    rng: fastrand::Rng,
 }
 
 impl<'a> Solver<'a> {
     /// Returns `None` when a capelito has no candidate on the starting board
-    fn new(grid: &'a CrosswordGrid, trie: &'a FlatTrie, board: &'a mut Board) -> Option<Self> {
+    fn new(grid: &'a CrosswordGrid, trie: &'a FlatTrie, board: &'a mut Board, seed: u64) -> Option<Self> {
         let candidate_counts: Vec<usize> = grid
             .capelitos
             .iter()
@@ -40,6 +42,7 @@ impl<'a> Solver<'a> {
             is_filled: vec![false; grid.capelitos.len()],
             candidate_counts,
             trail: Vec::new(),
+            rng: fastrand::Rng::with_seed(seed),
         })
     }
 
@@ -50,12 +53,17 @@ impl<'a> Solver<'a> {
         let capelito = &self.grid.capelitos[capelito_id];
 
         let pattern = extract_pattern(self.board, capelito);
-        let candidates = self.trie.find_matches(&pattern);
+        let mut candidates = self.trie.find_matches(&pattern);
         self.is_filled[capelito_id] = true;
 
-        for word in candidates {
+        // Lazy Fisher-Yates: move a random untried candidate to the end of the untried part,
+        // so only the candidates actually tried get shuffled
+        for remaining in (1..=candidates.len()).rev() {
+            candidates.swap(self.rng.usize(..remaining), remaining - 1);
+            let word = &candidates[remaining - 1];
+
             let trail_length = self.trail.len();
-            place_word(self.board, capelito, &word);
+            place_word(self.board, capelito, word);
 
             if self.forward_check(capelito_id, &pattern) && self.backtrack() {
                 return true;
@@ -100,6 +108,7 @@ impl<'a> Solver<'a> {
         true
     }
 
+    /// Replace the current candidates count with the previous iteration when backtracking
     fn undo_trail(&mut self, trail_length: usize) {
         while self.trail.len() > trail_length {
             let (capelito_id, previous_count) = self.trail.pop().unwrap();
@@ -111,6 +120,7 @@ impl<'a> Solver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     /// A 3x3 block of letters, crossed by 3 horizontal and 3 vertical words
     const SQUARE: &str = ".,2,2,2\n1,.,.,.\n1,.,.,.\n1,.,.,.";
@@ -136,11 +146,35 @@ mod tests {
         let trie = sample_trie();
         let mut board = grid.new_board();
 
-        assert!(solve_backtrack(&grid, &trie, &mut board));
+        assert!(solve_backtrack(&grid, &trie, &mut board, 0));
         assert_every_capelito_is_a_word(&grid, &trie, &board);
-        assert_eq!(&board[1][1..], b"mat");
-        assert_eq!(&board[2][1..], b"ami");
-        assert_eq!(&board[3][1..], b"tir");
+    }
+
+    #[test]
+    fn same_seed_gives_same_board() {
+        let grid: CrosswordGrid = SQUARE.parse().unwrap();
+        let trie = sample_trie();
+        let mut first_board = grid.new_board();
+        let mut second_board = grid.new_board();
+
+        assert!(solve_backtrack(&grid, &trie, &mut first_board, 42));
+        assert!(solve_backtrack(&grid, &trie, &mut second_board, 42));
+        assert_eq!(first_board, second_board);
+    }
+
+    #[test]
+    fn different_seeds_pick_different_words() {
+        let grid: CrosswordGrid = "1,.,.,.".parse().unwrap();
+        let trie = sample_trie();
+
+        let words: HashSet<Vec<u8>> = (0..20)
+            .map(|seed| {
+                let mut board = grid.new_board();
+                assert!(solve_backtrack(&grid, &trie, &mut board, seed));
+                extract_pattern(&board, &grid.capelitos[0])
+            })
+            .collect();
+        assert!(words.len() > 1, "20 seeds all picked {words:?}");
     }
 
     #[test]
@@ -149,7 +183,7 @@ mod tests {
         let trie = sample_trie();
         let mut board = grid.new_board();
 
-        assert!(solve_backtrack(&grid, &trie, &mut board));
+        assert!(solve_backtrack(&grid, &trie, &mut board, 0));
         assert_every_capelito_is_a_word(&grid, &trie, &board);
         assert_eq!(board[3][3], b'r');
     }
@@ -162,7 +196,7 @@ mod tests {
         trie.insert(b"tir");
         let mut board = grid.new_board();
 
-        assert!(!solve_backtrack(&grid, &trie, &mut board));
+        assert!(!solve_backtrack(&grid, &trie, &mut board, 0));
         assert_eq!(board, grid.new_board());
     }
 
@@ -172,7 +206,7 @@ mod tests {
         let trie = sample_trie();
         let mut board = grid.new_board();
 
-        assert!(!solve_backtrack(&grid, &trie, &mut board));
+        assert!(!solve_backtrack(&grid, &trie, &mut board, 0));
         assert_eq!(board, grid.new_board());
     }
 
@@ -181,7 +215,7 @@ mod tests {
         let grid: CrosswordGrid = SQUARE.parse().unwrap();
         let trie = sample_trie();
         let mut board = grid.new_board();
-        let mut solver = Solver::new(&grid, &trie, &mut board).unwrap();
+        let mut solver = Solver::new(&grid, &trie, &mut board, 0).unwrap();
 
         // First row "eau": no sample word starts with "u", so the last column is dead
         let first_row = grid.capelitos.iter().find(|c| c.is_horizontal() && c.first_letter_i == 1).unwrap();

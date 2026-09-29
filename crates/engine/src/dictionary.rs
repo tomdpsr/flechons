@@ -2,6 +2,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Result};
 use std::ops::ControlFlow;
 
+/// Dictionary shipped in `resources/`, relative to the repository root
+pub const DEFAULT_DICTIONARY_PATH: &str = "resources/dictionaries/french.txt";
+
 /// Child index used for "no child": the root (index 0) is never a child
 const NO_CHILD: u32 = 0;
 /// `word_lengths` is a `u32` bitmask, so words must be shorter than this

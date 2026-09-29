@@ -1,11 +1,9 @@
 use std::process;
 
 use clap::{Parser, Subcommand};
-use flechons::grid::extract_pattern;
-use flechons::{solve_backtrack, Capelito, CrosswordGrid, FlatTrie};
-
-/// Dictionary used when no dictionary path is given
-const DEFAULT_DICTIONARY_PATH: &str = "resources/dictionaries/french.txt";
+use engine::dictionary::DEFAULT_DICTIONARY_PATH;
+use engine::grid::extract_pattern;
+use engine::{solve_backtrack, Capelito, CrosswordGrid, FlatTrie};
 
 #[derive(Parser)]
 #[command(about = "Generate French arrow crosswords (mots fléchés)")]

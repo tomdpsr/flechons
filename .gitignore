@@ -24,3 +24,7 @@ target
 # Added by cargo
 
 /target
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
